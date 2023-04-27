@@ -209,7 +209,3 @@ def plugin_loaded():
     server = TCPServer((host, port), ConnectionHandler)
     Thread(target=start_server, args=[]).start()
     say('Server running on ' + host + ':' + str(port) + '...')
-
-# call the plugin_loaded() function if running in sublime text 2
-if (int(sublime.version())< 3000):
-    plugin_loaded()
