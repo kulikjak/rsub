@@ -23,7 +23,7 @@ server = None
 
 
 def say(msg):
-    print('[rsub] ' + msg)
+    print(f'[rsub] {msg}')
 
 
 class Session:
