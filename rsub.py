@@ -1,6 +1,7 @@
 import os
 import socket
 import socketserver
+import subprocess
 import tempfile
 import threading
 
@@ -26,38 +27,39 @@ def say(msg):
 
 
 class Session:
-    def __init__(self, socket):
+    def __init__(self, sock):
         self.env = {}
         self.file = b""
         self.file_size = 0
         self.in_file = False
         self.parse_done = False
-        self.socket = socket
+        self.socket = sock
         self.temp_path = None
+        self.temp_dir = None
 
     def parse_input(self, input_line):
-        if (input_line.strip() == b"open" or self.parse_done is True):
+        if input_line.strip() == b"open" or self.parse_done is True:
             return
 
-        if(self.in_file is False):
+        if self.in_file is False:
             input_line = input_line.decode("utf8").strip()
-            if (input_line == ""):
+            if input_line == "":
                 return
-            if (input_line == "."):
+            if input_line == ".":
                 self.parse_file(b".\n")
                 return
-            k, v = input_line.split(":", 1)
-            if (k == "data"):
-                self.file_size = int(v)
+            key, val = input_line.split(":", 1)
+            if key == "data":
+                self.file_size = int(val)
                 if len(self.env) > 1:
                     self.in_file = True
             else:
-                self.env[k] = v.strip()
+                self.env[key] = val.strip()
         else:
             self.parse_file(input_line)
 
     def parse_file(self, line):
-        if(len(self.file) >= self.file_size and line == b".\n"):
+        if len(self.file) >= self.file_size and line == b".\n":
             self.in_file = False
             self.parse_done = True
             sublime.set_timeout(self.on_done, 0)
@@ -89,8 +91,8 @@ class Session:
         # overwriting each other.
         try:
             self.temp_dir = tempfile.mkdtemp(prefix='rsub-')
-        except OSError as e:
-            sublime.error_message('Failed to create rsub temporary directory! Error: %s' % e)
+        except OSError as err:
+            sublime.error_message(f'Failed to create rsub temporary directory! Error: {err}')
             return
         self.temp_path = os.path.join(self.temp_dir,
                                       os.path.basename(self.env['display-name'].split(':')[-1]))
@@ -99,7 +101,7 @@ class Session:
             temp_file.write(self.file[:self.file_size])
             temp_file.flush()
             temp_file.close()
-        except IOError as e:
+        except IOError as err:
             # Remove the file if it exists.
             if os.path.exists(self.temp_path):
                 os.remove(self.temp_path)
@@ -108,7 +110,7 @@ class Session:
             except OSError:
                 pass
 
-            sublime.error_message('Failed to write to temp file! Error: %s' % str(e))
+            sublime.error_message(f'Failed to write to temp file! Error: {err}')
 
         # create new window if needed
         if len(sublime.windows()) == 0 or "new" in self.env:
@@ -125,16 +127,14 @@ class Session:
         SESSIONS[view.id()] = self
 
         # Bring sublime to front
-        if(sublime.platform() == 'osx'):
-            if(SBApplication):
+        if sublime.platform() == 'osx':
+            if SBApplication:
                 subl_window = SBApplication.applicationWithBundleIdentifier_("com.sublimetext.2")
                 subl_window.activate()
             else:
                 os.system("/usr/bin/osascript -e '%s'" %
                           'tell app "Finder" to set frontmost of process "Sublime Text" to true')
-        elif(sublime.platform() == 'linux'):
-            import subprocess
-
+        elif sublime.platform() == 'linux':
             if os.getenv("XDG_SESSION_TYPE") == "wayland":
                 # Wayland doesn't have a tool like wmctrl, so this
                 # oneliner (though Gnome specific) has to suffice.
@@ -159,7 +159,7 @@ class ConnectionHandler(socketserver.BaseRequestHandler):
         socket_fd = self.request.makefile("rb")
         while True:
             line = socket_fd.readline()
-            if(len(line) == 0):
+            if len(line) == 0:
                 break
             session.parse_input(line)
 
@@ -184,13 +184,13 @@ def unload_handler():
 
 class RSubEventListener(sublime_plugin.EventListener):
     def on_post_save(self, view):
-        if (view.id() in SESSIONS):
+        if view.id() in SESSIONS:
             sess = SESSIONS[view.id()]
             sess.send_save()
             say('Saved ' + sess.env['display-name'])
 
     def on_close(self, view):
-        if(view.id() in SESSIONS):
+        if view.id() in SESSIONS:
             sess = SESSIONS.pop(view.id())
             sess.close()
             say('Closed ' + sess.env['display-name'])
