@@ -135,7 +135,19 @@ class Session:
                           'tell app "Finder" to set frontmost of process "Sublime Text" to true')
         elif(sublime.platform() == 'linux'):
             import subprocess
-            subprocess.call("wmctrl -xa 'sublime_text.sublime-text-2'", shell=True)
+
+            if os.getenv("XDG_SESSION_TYPE") == "wayland":
+                # Wayland doesn't have a tool like wmctrl, so this
+                # oneliner (though Gnome specific) has to suffice.
+                subprocess.run([
+                    "gdbus", "call", "--session",
+                    "--dest", "org.gnome.Shell",
+                    "--object-path", "/org/gnome/Shell",
+                    "--method", "org.gnome.Shell.Eval",
+                    'var mw = global.get_window_actors().map(w=>w.meta_window).find(mw=>mw.get_title().includes("Sublime Text")); mw && mw.activate(0)',
+                ])
+            else:
+                subprocess.run("wmctrl -xa 'sublime_text.sublime-text-3'", shell=True)
 
 
 class ConnectionHandler(socketserver.BaseRequestHandler):
