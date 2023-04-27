@@ -1,13 +1,12 @@
+import os
+import socket
+import socketserver
+import tempfile
+import threading
+
 import sublime
 import sublime_plugin
-import os
-import tempfile
-import socket
-from threading import Thread
-try:
-    import socketserver
-except ImportError:
-    import SocketServer as socketserver
+
 try:
     from ScriptingBridge import SBApplication
 except ImportError:
@@ -207,5 +206,5 @@ def plugin_loaded():
 
     # Start server thread
     server = TCPServer((host, port), ConnectionHandler)
-    Thread(target=start_server, args=[]).start()
+    threading.Thread(target=start_server, args=[]).start()
     say('Server running on ' + host + ':' + str(port) + '...')
