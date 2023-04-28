@@ -15,17 +15,15 @@ try:
 except ImportError:
     SBApplication = None
 
-'''
-Problems:
-Double line breaks on Windows.
-'''
+# Problems:
+# Double line breaks on Windows.
 
 SESSIONS = {}
 server = None
 
 
 def say(msg: str) -> None:
-    print(f'[rsub] {msg}')
+    print(f"[rsub] {msg}")
 
 
 class Session:
@@ -70,7 +68,7 @@ class Session:
 
     def close(self) -> None:
         self.socket.send(b"close\n")
-        self.socket.send(b"token: " + self.env['token'].encode("utf8") + b"\n")
+        self.socket.send(b"token: " + self.env["token"].encode("utf8") + b"\n")
         self.socket.send(b"\n")
         self.socket.shutdown(socket.SHUT_RDWR)
         self.socket.close()
@@ -81,7 +79,7 @@ class Session:
 
     def send_save(self) -> None:
         self.socket.send(b"save\n")
-        self.socket.send(b"token: " + self.env['token'].encode("utf8") + b"\n")
+        self.socket.send(b"token: " + self.env["token"].encode("utf8") + b"\n")
         assert self.temp_path
         temp_file = open(self.temp_path, "rb")
         new_file = temp_file.read()
@@ -95,12 +93,12 @@ class Session:
         # multiple files with the same basename to be edited at once without
         # overwriting each other.
         try:
-            self.temp_dir = tempfile.mkdtemp(prefix='rsub-')
+            self.temp_dir = tempfile.mkdtemp(prefix="rsub-")
         except OSError as err:
-            sublime.error_message(f'Failed to create rsub temporary directory! Error: {err}')
+            sublime.error_message(f"Failed to create rsub temporary directory! Error: {err}")
             return
         self.temp_path = os.path.join(self.temp_dir,
-                                      os.path.basename(self.env['display-name'].split(':')[-1]))
+                                      os.path.basename(self.env["display-name"].split(":")[-1]))
         try:
             temp_file = open(self.temp_path, "wb+")
             temp_file.write(self.file[:self.file_size])
@@ -115,7 +113,7 @@ class Session:
             except OSError:
                 pass
 
-            sublime.error_message(f'Failed to write to temp file! Error: {err}')
+            sublime.error_message(f"Failed to write to temp file! Error: {err}")
 
         # create new window if needed
         if len(sublime.windows()) == 0 or "new" in self.env:
@@ -126,20 +124,22 @@ class Session:
 
         # Add the file metadata to the view's settings
         # This is mostly useful to obtain the path of this file on the server
-        view.settings().set('rsub', self.env)
+        #view.settings().set("rsub", self.env) NOTE: this is currently useless
 
         # Add the session to the global list
         SESSIONS[view.id()] = self
 
         # Bring sublime to front
-        if sublime.platform() == 'osx':
+        if sublime.platform() == "osx":
             if SBApplication:
-                subl_window = SBApplication.applicationWithBundleIdentifier_("com.sublimetext.2")
+                subl_window = SBApplication.applicationWithBundleIdentifier_("com.sublimetext.4")
                 subl_window.activate()
             else:
-                os.system("/usr/bin/osascript -e '%s'" %
-                          'tell app "Finder" to set frontmost of process "Sublime Text" to true')
-        elif sublime.platform() == 'linux':
+                subprocess.run([
+                    "/usr/bin/osascript", "-e",
+                    "tell app \"Finder\" to set frontmost of process \"Sublime Text\" to true"
+                ])
+        elif sublime.platform() == "linux":
             if os.getenv("XDG_SESSION_TYPE") == "wayland":
                 # Wayland doesn't have a tool like wmctrl, so this
                 # oneliner (though Gnome specific) has to suffice.
@@ -156,10 +156,11 @@ class Session:
 
 class ConnectionHandler(socketserver.BaseRequestHandler):
     def handle(self) -> None:
-        say('New connection from ' + str(self.client_address))
+        say(f"New connection from {self.client_address}")
 
         session = Session(self.request)
-        self.request.send(b"Sublime Text 2 (rsub plugin)\n")
+        version = sublime.version().encode("utf8")
+        self.request.send(b"Sublime Text " + version + b" (rsub plugin)\n")
 
         socket_fd = self.request.makefile("rb")
         while True:
@@ -168,7 +169,7 @@ class ConnectionHandler(socketserver.BaseRequestHandler):
                 break
             session.parse_input(line)
 
-        say('Connection close.')
+        say("Connection closed")
 
 
 class TCPServer(socketserver.ThreadingTCPServer):
@@ -182,7 +183,7 @@ def start_server() -> None:
 
 def unload_handler() -> None:
     global server
-    say('Killing server...')
+    say("Killing server...")
     if server:
         server.shutdown()
         server.server_close()
@@ -191,19 +192,19 @@ def unload_handler() -> None:
 class RSubEventListener(sublime_plugin.EventListener):
     def on_post_save(self, view: sublime.View) -> None:
         if view.id() in SESSIONS:
-            sess = SESSIONS[view.id()]
-            sess.send_save()
-            say('Saved ' + sess.env['display-name'])
+            session = SESSIONS[view.id()]
+            session.send_save()
+            say(f"Saved {session.env['display-name']}")
 
     def on_close(self, view: sublime.View) -> None:
         if view.id() in SESSIONS:
-            sess = SESSIONS.pop(view.id())
-            sess.close()
-            say('Closed ' + sess.env['display-name'])
+            session = SESSIONS.pop(view.id())
+            session.close()
+            say(f"Closed {session.env['display-name']}")
 
 
 def plugin_loaded() -> None:
-    global SESSIONS, server
+    global server
 
     # Load settings
     settings = sublime.load_settings("rsub.sublime-settings")
@@ -216,4 +217,4 @@ def plugin_loaded() -> None:
     # Start server thread
     server = TCPServer((host, port), ConnectionHandler)
     threading.Thread(target=start_server, args=[]).start()
-    say('Server running on ' + host + ':' + str(port) + '...')
+    say(f"Server running on {host}:{port}")
