@@ -69,14 +69,15 @@ class Session:
         else:
             self.file += line
 
-    def close(self) -> None:
+    def close(self, keep: bool = False) -> None:
         self.socket.send(b"close\n")
         self.socket.send(b"token: " + self.env["token"].encode("utf8") + b"\n")
         self.socket.send(b"\n")
         self.socket.shutdown(socket.SHUT_RDWR)
         self.socket.close()
-        assert self.temp_path
-        self.temp_path.unlink()
+        if not keep:
+            assert self.temp_path
+            self.temp_path.unlink()
         # TODO: delete dirs as well?
 
     def send_save(self) -> None:
@@ -117,7 +118,7 @@ class Session:
         # close previous duplicate session if it exists
         if view.id() in SESSIONS:
             previous = SESSIONS[view.id()]
-            previous.close()
+            previous.close(keep=True)
             say('Closed duplicate ' + previous.env['display-name'])
 
         # Add the session to the global list
