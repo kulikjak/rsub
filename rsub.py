@@ -1,4 +1,5 @@
 import os
+import pathlib
 import socket
 import socketserver
 import subprocess
@@ -18,8 +19,10 @@ except ImportError:
 # Problems:
 # Double line breaks on Windows.
 
-SESSIONS = {}
+
+SESSIONS: Dict[int, 'Session'] = {}
 server = None
+session_dir = None
 
 
 def say(msg: str) -> None:
@@ -34,8 +37,8 @@ class Session:
         self.in_file = False
         self.parse_done = False
         self.socket = sock
-        self.temp_path: Optional[str] = None
-        self.temp_dir: Optional[str] = None
+        self.temp_path: Optional[pathlib.Path] = None
+        self.temp_dir: Optional[pathlib.Path] = None
 
     def parse_input(self, input_line: bytes) -> None:
         if input_line.strip() == b"open" or self.parse_done is True:
@@ -73,58 +76,49 @@ class Session:
         self.socket.shutdown(socket.SHUT_RDWR)
         self.socket.close()
         assert self.temp_path
-        assert self.temp_dir
-        os.unlink(self.temp_path)
-        os.rmdir(self.temp_dir)
+        self.temp_path.unlink()
+        # TODO: delete dirs as well?
 
     def send_save(self) -> None:
         self.socket.send(b"save\n")
         self.socket.send(b"token: " + self.env["token"].encode("utf8") + b"\n")
         assert self.temp_path
-        temp_file = open(self.temp_path, "rb")
-        new_file = temp_file.read()
-        temp_file.close()
+        with self.temp_path.open("rb") as ifile:
+            new_file = ifile.read()
         self.socket.send(b"data: " + str(len(new_file)).encode("utf8") + b"\n")
         self.socket.send(new_file)
         self.socket.send(b"\n")
 
     def on_done(self) -> None:
-        # Create a secure temporary directory, both for privacy and to allow
-        # multiple files with the same basename to be edited at once without
-        # overwriting each other.
-        try:
-            self.temp_dir = tempfile.mkdtemp(prefix="rsub-")
-        except OSError as err:
-            sublime.error_message(f"Failed to create rsub temporary directory! Error: {err}")
-            return
-        self.temp_path = os.path.join(self.temp_dir,
-                                      os.path.basename(self.env["display-name"].split(":")[-1]))
-        try:
-            temp_file = open(self.temp_path, "wb+")
-            temp_file.write(self.file[:self.file_size])
-            temp_file.flush()
-            temp_file.close()
-        except IOError as err:
-            # Remove the file if it exists.
-            if os.path.exists(self.temp_path):
-                os.remove(self.temp_path)
-            try:
-                os.rmdir(self.temp_dir)
-            except OSError:
-                pass
+        assert session_dir
 
-            sublime.error_message(f"Failed to write to temp file! Error: {err}")
+        # replicate remote path locally
+        real_path = pathlib.Path(self.env["real-path"].lstrip("/")).parent
+        remote, name = self.env["display-name"].split(":", 1)
+        name = os.path.basename(name)
+        self.temp_dir = session_dir / remote / real_path
+        self.temp_dir.mkdir(parents=True, exist_ok=True)
+        self.temp_path = self.temp_dir / name
+
+        with self.temp_path.open("wb+") as ofile:
+            ofile.write(self.file[:self.file_size])
 
         # create new window if needed
         if len(sublime.windows()) == 0 or "new" in self.env:
             sublime.run_command("new_window")
 
         # Open it within sublime
-        view = sublime.active_window().open_file(self.temp_path)
+        view = sublime.active_window().open_file(str(self.temp_path))
 
         # Add the file metadata to the view's settings
         # This is mostly useful to obtain the path of this file on the server
         #view.settings().set("rsub", self.env) NOTE: this is currently useless
+
+        # close previous duplicate session if it exists
+        if view.id() in SESSIONS:
+            previous = SESSIONS[view.id()]
+            previous.close()
+            say('Closed duplicate ' + previous.env['display-name'])
 
         # Add the session to the global list
         SESSIONS[view.id()] = self
@@ -204,12 +198,20 @@ class RSubEventListener(sublime_plugin.EventListener):
 
 
 def plugin_loaded() -> None:
-    global server
+    global server, session_dir
 
     # Load settings
     settings = sublime.load_settings("rsub.sublime-settings")
     port = settings.get("port", 52698)
     host = settings.get("host", "localhost")
+
+    # prepare a secure temporary directory for this Sublime session
+    try:
+        temp = tempfile.TemporaryDirectory(prefix="rsub-")
+        session_dir = pathlib.Path(temp.name)
+    except OSError as err:
+        sublime.error_message(f"Failed to create rsub temporary directory! Error: {err}")
+        return
 
     assert isinstance(port, int)
     assert isinstance(host, (str, bytes))
