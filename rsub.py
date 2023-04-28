@@ -5,6 +5,8 @@ import subprocess
 import tempfile
 import threading
 
+from typing import Any, Dict, Optional
+
 import sublime
 import sublime_plugin
 
@@ -22,33 +24,33 @@ SESSIONS = {}
 server = None
 
 
-def say(msg):
+def say(msg: str) -> None:
     print(f'[rsub] {msg}')
 
 
 class Session:
-    def __init__(self, sock):
-        self.env = {}
+    def __init__(self, sock: socket.socket) -> None:
+        self.env: Dict[str, str] = {}
         self.file = b""
         self.file_size = 0
         self.in_file = False
         self.parse_done = False
         self.socket = sock
-        self.temp_path = None
-        self.temp_dir = None
+        self.temp_path: Optional[str] = None
+        self.temp_dir: Optional[str] = None
 
-    def parse_input(self, input_line):
+    def parse_input(self, input_line: bytes) -> None:
         if input_line.strip() == b"open" or self.parse_done is True:
             return
 
         if self.in_file is False:
-            input_line = input_line.decode("utf8").strip()
-            if input_line == "":
+            line = input_line.decode("utf8").strip()
+            if line == "":
                 return
-            if input_line == ".":
+            if line == ".":
                 self.parse_file(b".\n")
                 return
-            key, val = input_line.split(":", 1)
+            key, val = line.split(":", 1)
             if key == "data":
                 self.file_size = int(val)
                 if len(self.env) > 1:
@@ -58,7 +60,7 @@ class Session:
         else:
             self.parse_file(input_line)
 
-    def parse_file(self, line):
+    def parse_file(self, line: bytes) -> None:
         if len(self.file) >= self.file_size and line == b".\n":
             self.in_file = False
             self.parse_done = True
@@ -66,18 +68,21 @@ class Session:
         else:
             self.file += line
 
-    def close(self):
+    def close(self) -> None:
         self.socket.send(b"close\n")
         self.socket.send(b"token: " + self.env['token'].encode("utf8") + b"\n")
         self.socket.send(b"\n")
         self.socket.shutdown(socket.SHUT_RDWR)
         self.socket.close()
+        assert self.temp_path
+        assert self.temp_dir
         os.unlink(self.temp_path)
         os.rmdir(self.temp_dir)
 
-    def send_save(self):
+    def send_save(self) -> None:
         self.socket.send(b"save\n")
         self.socket.send(b"token: " + self.env['token'].encode("utf8") + b"\n")
+        assert self.temp_path
         temp_file = open(self.temp_path, "rb")
         new_file = temp_file.read()
         temp_file.close()
@@ -85,7 +90,7 @@ class Session:
         self.socket.send(new_file)
         self.socket.send(b"\n")
 
-    def on_done(self):
+    def on_done(self) -> None:
         # Create a secure temporary directory, both for privacy and to allow
         # multiple files with the same basename to be edited at once without
         # overwriting each other.
@@ -150,7 +155,7 @@ class Session:
 
 
 class ConnectionHandler(socketserver.BaseRequestHandler):
-    def handle(self):
+    def handle(self) -> None:
         say('New connection from ' + str(self.client_address))
 
         session = Session(self.request)
@@ -170,11 +175,12 @@ class TCPServer(socketserver.ThreadingTCPServer):
     allow_reuse_address = True
 
 
-def start_server():
+def start_server() -> None:
+    assert server
     server.serve_forever()
 
 
-def unload_handler():
+def unload_handler() -> None:
     global server
     say('Killing server...')
     if server:
@@ -183,26 +189,29 @@ def unload_handler():
 
 
 class RSubEventListener(sublime_plugin.EventListener):
-    def on_post_save(self, view):
+    def on_post_save(self, view: sublime.View) -> None:
         if view.id() in SESSIONS:
             sess = SESSIONS[view.id()]
             sess.send_save()
             say('Saved ' + sess.env['display-name'])
 
-    def on_close(self, view):
+    def on_close(self, view: sublime.View) -> None:
         if view.id() in SESSIONS:
             sess = SESSIONS.pop(view.id())
             sess.close()
             say('Closed ' + sess.env['display-name'])
 
 
-def plugin_loaded():
+def plugin_loaded() -> None:
     global SESSIONS, server
 
     # Load settings
     settings = sublime.load_settings("rsub.sublime-settings")
     port = settings.get("port", 52698)
     host = settings.get("host", "localhost")
+
+    assert isinstance(port, int)
+    assert isinstance(host, (str, bytes))
 
     # Start server thread
     server = TCPServer((host, port), ConnectionHandler)

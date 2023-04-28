@@ -1,3 +1,3 @@
 
 mypy:
-	MYPYPATH=./sublime-stubs mypy --strict --check-untyped-defs rsub.py
+	MYPYPATH=./sublime-stubs mypy --ignore-missing-imports --strict --check-untyped-defs rsub.py
