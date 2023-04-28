@@ -175,7 +175,7 @@ def start_server() -> None:
     server.serve_forever()
 
 
-def unload_handler() -> None:
+def plugin_unloaded() -> None:
     global server
     say("Killing server...")
     if server:
