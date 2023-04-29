@@ -185,7 +185,7 @@ def plugin_unloaded() -> None:
 
 
 class RSubEventListener(sublime_plugin.EventListener):
-    def on_post_save(self, view: sublime.View) -> None:
+    def on_post_save_async(self, view: sublime.View) -> None:
         if view.id() in SESSIONS:
             session = SESSIONS[view.id()]
             session.send_save()
