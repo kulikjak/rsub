@@ -25,49 +25,70 @@ server = None
 session_dir = None
 
 
-def say(msg: str) -> None:
+def say(msg: Any) -> None:
     print(f"[rsub] {msg}")
 
 
 class Session:
     def __init__(self, sock: socket.socket) -> None:
         self.env: Dict[str, str] = {}
-        self.file = b""
-        self.file_size = 0
-        self.in_file = False
         self.parse_done = False
         self.socket = sock
+        self.sockfile = sock.makefile("rb")
         self.temp_path: Optional[pathlib.Path] = None
         self.temp_dir: Optional[pathlib.Path] = None
 
-    def parse_input(self, input_line: bytes) -> None:
-        if input_line.strip() == b"open" or self.parse_done is True:
-            return
+    def _download(self) -> None:
+        assert session_dir
 
-        if self.in_file is False:
-            line = input_line.decode("utf8").strip()
-            if line == "":
+        total_size = int(self.env["data"])
+
+        # replicate remote path locally
+        real_path = pathlib.Path(self.env["real-path"].lstrip("/")).parent
+        remote, name = self.env["display-name"].split(":", 1)
+        name = os.path.basename(name)
+        self.temp_dir = session_dir / remote / real_path
+        self.temp_dir.mkdir(parents=True, exist_ok=True)
+        self.temp_path = self.temp_dir / name
+
+        with self.temp_path.open("wb+") as ofile:
+            done_size = 0
+            if total_size > 1:
+                while done_size < total_size:
+                    line = self.sockfile.readline()
+                    size = len(line)
+
+                    if done_size + size > total_size:
+                        ofile.write(line[:total_size-done_size])
+                    else:
+                        ofile.write(line)
+                    done_size += size
+
+    def run(self) -> None:
+        while True:
+            line = self.sockfile.readline()
+            if len(line) == 0:
                 return
-            if line == ".":
-                self.parse_file(b".\n")
-                return
-            key, val = line.split(":", 1)
+
+            if self.parse_done:
+                # parsing is done and there is nothing to do
+                continue
+
+            if line.strip() == b"open":
+                # not much to do at this point
+                continue
+
+            uline = line.decode("utf8").strip()
+            key, val = uline.split(":", 1)
+            self.env[key] = val.strip()
+
             if key == "data":
-                self.file_size = int(val)
-                if len(self.env) > 1:
-                    self.in_file = True
-            else:
-                self.env[key] = val.strip()
-        else:
-            self.parse_file(input_line)
+                # for possible debug purposes
+                say(self.env)
 
-    def parse_file(self, line: bytes) -> None:
-        if len(self.file) >= self.file_size and line == b".\n":
-            self.in_file = False
-            self.parse_done = True
-            sublime.set_timeout(self.on_done, 0)
-        else:
-            self.file += line
+                self._download()
+                self.parse_done = True
+                sublime.set_timeout(self.on_done, 0)
 
     def close(self, keep: bool = False) -> None:
         self.socket.send(b"close\n")
@@ -91,19 +112,6 @@ class Session:
         self.socket.send(b"\n")
 
     def on_done(self) -> None:
-        assert session_dir
-
-        # replicate remote path locally
-        real_path = pathlib.Path(self.env["real-path"].lstrip("/")).parent
-        remote, name = self.env["display-name"].split(":", 1)
-        name = os.path.basename(name)
-        self.temp_dir = session_dir / remote / real_path
-        self.temp_dir.mkdir(parents=True, exist_ok=True)
-        self.temp_path = self.temp_dir / name
-
-        with self.temp_path.open("wb+") as ofile:
-            ofile.write(self.file[:self.file_size])
-
         # create new window if needed
         if len(sublime.windows()) == 0 or "new" in self.env:
             sublime.run_command("new_window")
@@ -157,12 +165,8 @@ class ConnectionHandler(socketserver.BaseRequestHandler):
         version = sublime.version().encode("utf8")
         self.request.send(b"Sublime Text " + version + b" (rsub plugin)\n")
 
-        socket_fd = self.request.makefile("rb")
-        while True:
-            line = socket_fd.readline()
-            if len(line) == 0:
-                break
-            session.parse_input(line)
+        session = Session(self.request)
+        session.run()
 
         say("Connection closed")
 
