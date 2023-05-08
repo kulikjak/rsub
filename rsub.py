@@ -35,8 +35,8 @@ class Session:
         self.parse_done = False
         self.socket = sock
         self.sockfile = sock.makefile("rb")
-        self.temp_path: Optional[pathlib.Path] = None
-        self.temp_dir: Optional[pathlib.Path] = None
+        self.local_path: Optional[pathlib.Path] = None
+        self.local_dir: Optional[pathlib.Path] = None
 
     def _download(self) -> None:
         assert session_dir
@@ -47,11 +47,13 @@ class Session:
         real_path = pathlib.Path(self.env["real-path"].lstrip("/")).parent
         remote, name = self.env["display-name"].split(":", 1)
         name = os.path.basename(name)
-        self.temp_dir = session_dir / remote / real_path
-        self.temp_dir.mkdir(parents=True, exist_ok=True)
-        self.temp_path = self.temp_dir / name
+        self.local_dir = session_dir / remote / real_path
+        self.local_dir.mkdir(parents=True, exist_ok=True)
+        self.local_path = self.local_dir / name
 
-        with self.temp_path.open("wb+") as ofile:
+        _, path = tempfile.mkstemp()
+        temp_file = pathlib.Path(path)
+        with temp_file.open("wb+") as ofile:
             done_size = 0
             if total_size > 1:
                 while done_size < total_size:
@@ -63,6 +65,8 @@ class Session:
                     else:
                         ofile.write(line)
                     done_size += size
+
+        temp_file.rename(self.local_path)
 
     def run(self) -> None:
         while True:
@@ -97,15 +101,15 @@ class Session:
         self.socket.shutdown(socket.SHUT_RDWR)
         self.socket.close()
         if not keep:
-            assert self.temp_path
-            self.temp_path.unlink()
+            assert self.local_path
+            self.local_path.unlink()
         # TODO: delete dirs as well?
 
     def send_save(self) -> None:
         self.socket.send(b"save\n")
         self.socket.send(b"token: " + self.env["token"].encode("utf8") + b"\n")
-        assert self.temp_path
-        with self.temp_path.open("rb") as ifile:
+        assert self.local_path
+        with self.local_path.open("rb") as ifile:
             new_file = ifile.read()
         self.socket.send(b"data: " + str(len(new_file)).encode("utf8") + b"\n")
         self.socket.send(new_file)
@@ -117,7 +121,7 @@ class Session:
             sublime.run_command("new_window")
 
         # Open it within sublime
-        view = sublime.active_window().open_file(str(self.temp_path))
+        view = sublime.active_window().open_file(str(self.local_path))
 
         # Add the file metadata to the view's settings
         # This is mostly useful to obtain the path of this file on the server
