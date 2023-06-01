@@ -95,25 +95,34 @@ class Session:
                 sublime.set_timeout(self.on_done, 0)
 
     def close(self, keep: bool = False) -> None:
-        self.socket.send(b"close\n")
-        self.socket.send(b"token: " + self.env["token"].encode("utf8") + b"\n")
-        self.socket.send(b"\n")
-        self.socket.shutdown(socket.SHUT_RDWR)
-        self.socket.close()
+        try:
+            self.socket.send(b"close\n")
+            self.socket.send(b"token: " + self.env["token"].encode("utf8") + b"\n")
+            self.socket.send(b"\n")
+            self.socket.shutdown(socket.SHUT_RDWR)
+            self.socket.close()
+        except ConnectionError:
+            # this can be safely ignored
+            pass
         if not keep:
             assert self.local_path
             self.local_path.unlink()
         # TODO: delete dirs as well?
 
-    def send_save(self) -> None:
-        self.socket.send(b"save\n")
-        self.socket.send(b"token: " + self.env["token"].encode("utf8") + b"\n")
-        assert self.local_path
-        with self.local_path.open("rb") as ifile:
-            new_file = ifile.read()
-        self.socket.send(b"data: " + str(len(new_file)).encode("utf8") + b"\n")
-        self.socket.send(new_file)
-        self.socket.send(b"\n")
+    def send_save(self) -> bool:
+        try:
+            self.socket.send(b"save\n")
+            self.socket.send(b"token: " + self.env["token"].encode("utf8") + b"\n")
+            assert self.local_path
+            with self.local_path.open("rb") as ifile:
+                new_file = ifile.read()
+            self.socket.send(b"data: " + str(len(new_file)).encode("utf8") + b"\n")
+            self.socket.send(new_file)
+            self.socket.send(b"\n")
+            return True
+        except ConnectionError as err:
+            sublime.error_message(f"Failed to save the file - remote connection was closed!\nError: {err}")
+        return False
 
     def on_done(self) -> None:
         # create new window if needed
@@ -196,8 +205,9 @@ class RSubEventListener(sublime_plugin.EventListener):
     def on_post_save_async(self, view: sublime.View) -> None:
         if view.id() in SESSIONS:
             session = SESSIONS[view.id()]
-            session.send_save()
-            say(f"Saved {session.env['display-name']}")
+            if (session.send_save()):
+                say(f"Saved {session.env['display-name']}")
+                # TODO: should the session be popped here?
 
     def on_close(self, view: sublime.View) -> None:
         if view.id() in SESSIONS:
