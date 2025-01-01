@@ -174,7 +174,6 @@ class ConnectionHandler(socketserver.BaseRequestHandler):
     def handle(self) -> None:
         say(f"New connection from {self.client_address}")
 
-        session = Session(self.request)
         version = sublime.version().encode("utf8")
         self.request.send(b"Sublime Text " + version + b" (rsub plugin)\n")
 
